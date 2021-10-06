@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Walkinplus</string>
+    <string name="permission_deny_text">Required permissions denied. Exiting.</string>
 </resources>
