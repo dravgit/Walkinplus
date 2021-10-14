@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.os.Bundle
+import android.util.Base64
 import android.util.Log
 import android.view.View
 import android.widget.Toast
@@ -16,6 +17,8 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.example.walkinplus.utils.NetworkUtil
+import com.example.walkinplus.models.FaceResponseModel
 import com.google.android.gms.tasks.OnSuccessListener
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
@@ -143,19 +146,20 @@ class TakePhotoActivity : AppCompatActivity() {
 
         @SuppressLint("UnsafeExperimentalUsageError")
         override fun analyze(imageProxy: ImageProxy) {
-            Log.e("PrintCount", "test")
-//            val mediaImage = imageProxy.image
-//            if (mediaImage != null) {
-//                checkFace(imageProxy, object : CheckFaceListener {
-//                    override fun onSuccess(draw: Draw) {
-//                        imageProxy.close()
-//                    }
-//
-//                    override fun onFail() {
-//                        imageProxy.close()
-//                    }
-//                })
-//            }
+            val mediaImage = imageProxy.image
+            if (mediaImage != null) {
+                checkFace(imageProxy, object : CheckFaceListener {
+                    override fun onSuccess(draw: Draw) {
+                        val face = toBitmap(imageProxy)
+                        Log.e("checkFace", "onSuccess")
+                        imageProxy.close()
+                    }
+
+                    override fun onFail() {
+                        imageProxy.close()
+                    }
+                })
+            }
         }
 
         interface CheckFaceListener {
@@ -163,16 +167,43 @@ class TakePhotoActivity : AppCompatActivity() {
             fun onFail()
         }
 
-        @SuppressLint("UnsafeExperimentalUsageError", "UnsafeOptInUsageError")
+        @SuppressLint("UnsafeExperimentalUsageError")
         fun checkFace(imageProxy: ImageProxy, listener: CheckFaceListener) {
-            val image = InputImage.fromMediaImage(imageProxy.image, imageProxy.imageInfo.rotationDegrees)
-
+            val bitmap = toBitmap(imageProxy)
+            val resize = bitmap?.let { Bitmap.createScaledBitmap(it, 480, 880, false) }
+            val image = InputImage.fromBitmap(resize, 0)
             faceDetector.process(image)
                 .addOnSuccessListener(OnSuccessListener { faces ->
                     if (faces.size > 0) {
+                        val base64 = resize?.toBase64String().toString()
+//                        base64?.let { Log.e("base64", it) }
+                        base64?.let {
+                            NetworkUtil.CheckFace(it, "edc_id", object : NetworkUtil.Companion.NetworkLisener<FaceResponseModel> {
+                                override fun onResponse(response: FaceResponseModel) {
+                                    Toast.makeText(ctx, "Success", Toast.LENGTH_LONG).show()
+                                }
+
+                                override fun onError(errorModel: WalkInPlusErrorModel) {
+                                    Toast.makeText(ctx, errorModel.msg, Toast.LENGTH_LONG).show()
+                                    Log.e("Error",errorModel.msg)
+                                }
+
+                                override fun onExpired() {
+                                    Toast.makeText(ctx, "Expired", Toast.LENGTH_LONG).show()
+                                }
+                            }, FaceResponseModel::class.java)
+                        }
+                        val face = faces[0]
+                        val faceWidth = face.boundingBox.width()
+                        Log.e("Status",faces.size.toString())
+                        Log.e("panya", "faceWidth : " + faceWidth)
+                        val element = Draw(ctx, face.boundingBox, face.trackingId?.toString() ?: "Undefined")
                         Log.e("Status","Found face")
+                        listener.onSuccess(element)
                     } else {
                         Log.e("Status","Not found face")
+                        Log.e("Status",faces.size.toString())
+                        listener.onFail()
                     }
                 })
                 .addOnFailureListener { e ->
@@ -184,6 +215,13 @@ class TakePhotoActivity : AppCompatActivity() {
             val stream = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.PNG, 90, stream)
             return stream.toByteArray()
+        }
+
+        fun Bitmap.toBase64String():String{
+            ByteArrayOutputStream().apply {
+                compress(Bitmap.CompressFormat.JPEG,10,this)
+                return Base64.encodeToString(toByteArray(),Base64.DEFAULT)
+            }
         }
 
         /**

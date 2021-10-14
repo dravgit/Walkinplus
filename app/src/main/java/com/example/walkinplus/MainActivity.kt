@@ -6,6 +6,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Log
+import android.util.Size
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -55,15 +56,19 @@ class MainActivity : AppCompatActivity() {
             // Used to bind the lifecycle of cameras to the lifecycle owner
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
 
-            // Preview
-            val preview = Preview.Builder()
+//            // Preview
+//            val preview = Preview.Builder()
+//                .build()
+//                .also {
+//                    it.setSurfaceProvider(viewFinder.surfaceProvider)
+//                }
+
+            val imageAnalysis = ImageAnalysis.Builder()
+                .setTargetResolution(Size(1200, 700))
                 .build()
-                .also {
-                    it.setSurfaceProvider(viewFinder.surfaceProvider)
-                }
 
             // Select back camera as a default
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+            val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
 
             try {
                 // Unbind use cases before rebinding
@@ -71,7 +76,7 @@ class MainActivity : AppCompatActivity() {
 
                 // Bind use cases to camera
                 cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview)
+                    this, cameraSelector, imageAnalysis)
 
             } catch(exc: Exception) {
                 Log.e(TAG, "Use case binding failed", exc)
