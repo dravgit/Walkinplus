@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.os.Bundle
+import android.os.Handler
 import android.util.Base64
 import android.util.Log
 import android.view.View
@@ -107,7 +108,6 @@ class TakePhotoActivity : AppCompatActivity() {
      */
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
-
         cameraProviderFuture.addListener(Runnable {
             // Used to bind the lifecycle of cameras to the lifecycle owner
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
@@ -174,24 +174,32 @@ class TakePhotoActivity : AppCompatActivity() {
             val image = InputImage.fromBitmap(resize, 0)
             faceDetector.process(image)
                 .addOnSuccessListener(OnSuccessListener { faces ->
-                    if (faces.size > 0) {
-                        val base64 = resize?.toBase64String().toString()
-//                        base64?.let { Log.e("base64", it) }
-                        base64?.let {
-                            NetworkUtil.CheckFace(it, "edc_id", object : NetworkUtil.Companion.NetworkLisener<FaceResponseModel> {
-                                override fun onResponse(response: FaceResponseModel) {
-                                    Toast.makeText(ctx, "Success", Toast.LENGTH_LONG).show()
-                                }
+                    if (faces.size > 0 && sending == false) {
+                        sending = true
+                        val base64 = resize?.toBase64String()
+                        if(sending == true){
+                            base64?.let {
+                                NetworkUtil.CheckFace(it, "edc_id", object : NetworkUtil.Companion.NetworkLisener<FaceResponseModel> {
+                                    override fun onResponse(response: FaceResponseModel) {
+                                        Toast.makeText(ctx, "Success", Toast.LENGTH_LONG).show()
+                                        Handler().postDelayed({
+                                            sending = false
+                                        }, 3000)
+                                    }
 
-                                override fun onError(errorModel: WalkInPlusErrorModel) {
-                                    Toast.makeText(ctx, errorModel.msg, Toast.LENGTH_LONG).show()
-                                    Log.e("Error",errorModel.msg)
-                                }
+                                    override fun onError(errorModel: WalkInPlusErrorModel) {
+                                        Toast.makeText(ctx, errorModel.msg, Toast.LENGTH_LONG).show()
+                                        Log.e("Error",errorModel.msg)
+                                        Handler().postDelayed({
+                                            sending = false
+                                        }, 3000)
+                                    }
 
-                                override fun onExpired() {
-                                    Toast.makeText(ctx, "Expired", Toast.LENGTH_LONG).show()
-                                }
-                            }, FaceResponseModel::class.java)
+                                    override fun onExpired() {
+                                        Toast.makeText(ctx, "Expired", Toast.LENGTH_LONG).show()
+                                    }
+                                }, FaceResponseModel::class.java)
+                            }
                         }
                         val face = faces[0]
                         val faceWidth = face.boundingBox.width()
@@ -223,6 +231,8 @@ class TakePhotoActivity : AppCompatActivity() {
                 return Base64.encodeToString(toByteArray(),Base64.DEFAULT)
             }
         }
+
+        private var sending: Boolean = false
 
         /**
          * Convert Image Proxy to Bitmap

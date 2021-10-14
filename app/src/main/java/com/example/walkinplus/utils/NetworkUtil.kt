@@ -23,7 +23,6 @@ class NetworkUtil {
         var progressdialog: ProgressDialog? = null
 
         fun CheckFace(face: String, serial: String, listener: NetworkLisener<FaceResponseModel>, kClass: Class<FaceResponseModel>) {
-//            showLoadingDialog()
             AndroidNetworking.post(URL_CHECK)
                 .addBodyParameter("image", face)
                 .addBodyParameter("edc_id", "ED0001")
