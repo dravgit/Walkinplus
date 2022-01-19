@@ -5,7 +5,7 @@ import android.content.SharedPreferences;
 
 public class PreferenceUtils {
 
-    private static final String PREFERENCE_KEY_USER_ID = "user_id";
+    private static final String PREFERENCE_KEY_SERIAL = "serial";
 
     private static Context mAppContext;
 
@@ -21,13 +21,13 @@ public class PreferenceUtils {
         return mAppContext.getSharedPreferences("walkinplus", Context.MODE_PRIVATE);
     }
 
-    public static void setUserId(String userId) {
+    public static void setSerial(String serial) {
         SharedPreferences.Editor editor = getSharedPreferences().edit();
-        editor.putString(PREFERENCE_KEY_USER_ID, userId).apply();
+        editor.putString(PREFERENCE_KEY_SERIAL, serial).apply();
     }
 
-    public static String getUserId() {
-        return getSharedPreferences().getString(PREFERENCE_KEY_USER_ID, "");
+    public static String getSerial() {
+        return getSharedPreferences().getString(PREFERENCE_KEY_SERIAL, "");
     }
 
 }

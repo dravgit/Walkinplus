@@ -14,8 +14,14 @@ android {
         targetSdkVersion 31
         versionCode 1
         versionName "1.0"
-
+        ndk.abiFilters 'armeabi','armeabi-v7a'
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDir 'jniLibs'
+        }
     }
 
     buildTypes {
@@ -68,4 +74,9 @@ dependencies {
     testImplementation 'junit:junit:4.13'
     androidTestImplementation 'androidx.test.ext:junit:1.1.2'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.3.0'
+
+    implementation files('libs/core-3.1.0.jar')
+    implementation files('libs/SmartCardLib.jar')
+    implementation files('libs/telpo_api.jar')
+    implementation files('libs/telpo_temperature_v1.0.5.jar')
 }

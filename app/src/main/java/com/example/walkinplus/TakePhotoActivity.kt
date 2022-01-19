@@ -2,14 +2,25 @@ package com.example.walkinplus
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.*
+import android.nfc.NfcAdapter
+import android.nfc.NfcManager
+import android.nfc.Tag
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
+import android.speech.tts.TextToSpeech
 import android.util.Base64
 import android.util.Log
 import android.view.View
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
@@ -18,12 +29,18 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.example.walkinplus.utils.NetworkUtil
+import com.common.pos.api.util.PosUtil
+import com.common.thermalimage.HotImageCallback
+import com.common.thermalimage.TemperatureBitmapData
+import com.common.thermalimage.TemperatureData
+import com.common.thermalimage.ThermalImageUtil
 import com.example.walkinplus.models.FaceResponseModel
+import com.example.walkinplus.utils.NetworkUtil
 import com.google.android.gms.tasks.OnSuccessListener
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import kotlinx.android.synthetic.main.activity_main.*
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
@@ -40,11 +57,16 @@ var livenessDone = false
  * Main entry point into TensorFlow Lite Classifier
  */
 class TakePhotoActivity : AppCompatActivity() {
+    val ctx: Context = this
     // CameraX variables
     private lateinit var preview: Preview // Preview use case, fast, responsive view of the camera
     private lateinit var imageAnalyzer: ImageAnalysis // Analysis use case, for running ML code
     private lateinit var camera: Camera
     private val cameraExecutor = Executors.newSingleThreadExecutor()
+    private val tv_show_nfc: TextView? = null
+    private var mNfcAdapter: NfcAdapter? = null
+    private var mPendingIntent: PendingIntent? = null
+    private val textToSpeech: TextToSpeech? = null
 
     // Views attachment
     private val viewFinder by lazy {
@@ -57,6 +79,11 @@ class TakePhotoActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        Log.e("Serial", Build.SERIAL)
+        val mNfcManager = getSystemService(NFC_SERVICE) as NfcManager
+        mNfcAdapter = mNfcManager.defaultAdapter
+        mPendingIntent = PendingIntent.getActivity(this, 0, Intent(this, javaClass), 0)
+        init_NFC()
         val options = FaceDetectorOptions.Builder()
             .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
             .setMinFaceSize(0.1f)
@@ -81,7 +108,11 @@ class TakePhotoActivity : AppCompatActivity() {
     /**
      * This gets called after the Camera permission pop up is shown.
      */
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+            requestCode: Int,
+            permissions: Array<String>,
+            grantResults: IntArray
+    ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
             if (allPermissionsGranted()) {
@@ -113,14 +144,14 @@ class TakePhotoActivity : AppCompatActivity() {
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
 
             preview = Preview.Builder()
-                .build()
+                    .build()
 
             imageAnalyzer = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .build()
-                .also { analysisUseCase: ImageAnalysis ->
-                    analysisUseCase.setAnalyzer(cameraExecutor, ImageAnalyzer(this))
-                }
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
+                    .also { analysisUseCase: ImageAnalysis ->
+                        analysisUseCase.setAnalyzer(cameraExecutor, ImageAnalyzer(this,this))
+                    }
             // Select camera, back is the default. If it is not available, choose front camera
             val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
 //                if (cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA))
@@ -130,7 +161,12 @@ class TakePhotoActivity : AppCompatActivity() {
                 cameraProvider.unbindAll()
                 // Bind use cases to camera - try to bind everything at once and CameraX will find
                 // the best combination.
-                camera = cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalyzer)
+                camera = cameraProvider.bindToLifecycle(
+                        this,
+                        cameraSelector,
+                        preview,
+                        imageAnalyzer
+                )
                 // Attach the preview to preview view, aka View Finder
                 preview.setSurfaceProvider(viewFinder.surfaceProvider)
             } catch (exc: Exception) {
@@ -140,7 +176,7 @@ class TakePhotoActivity : AppCompatActivity() {
     }
 
 
-    private class ImageAnalyzer(val ctx: Context) :
+    private class ImageAnalyzer(val ctx: Context, val activity: TakePhotoActivity) :
         ImageAnalysis.Analyzer {
         // TODO 6. Optional GPU acceleration
 
@@ -150,6 +186,7 @@ class TakePhotoActivity : AppCompatActivity() {
             if (mediaImage != null) {
                 checkFace(imageProxy, object : CheckFaceListener {
                     override fun onSuccess(draw: Draw) {
+
                         val face = toBitmap(imageProxy)
                         Log.e("checkFace", "onSuccess")
                         imageProxy.close()
@@ -172,45 +209,84 @@ class TakePhotoActivity : AppCompatActivity() {
             val bitmap = toBitmap(imageProxy)
             val resize = bitmap?.let { Bitmap.createScaledBitmap(it, 480, 880, false) }
             val image = InputImage.fromBitmap(resize, 0)
+            val temperatureUtil = ThermalImageUtil(ctx)
+            val distance = 50f
+            val distances: Float = distance
+            val temperatureData: TemperatureData? = temperatureUtil?.getDataAndBitmap(distances, true, object : HotImageCallback.Stub() {
+                override fun onTemperatureFail(e: String) {
+                    Log.e("temp", "1")
+                }
+
+                override fun getTemperatureBimapData(data: TemperatureBitmapData) {
+                    Log.e("temp", "2")
+                }
+            })
+            if (temperatureData != null) {
+                var text = ""
+                if (temperatureData?.isUnusualTem) {
+                    Log.e("temp", "3")
+                } else {
+                    Log.e("temp", "4")
+                }
+            }
             faceDetector.process(image)
                 .addOnSuccessListener(OnSuccessListener { faces ->
-                    if (faces.size > 0 && sending == false) {
+                    if (faces.size > 0 && sending == false && temperatureData != null) {
+                        Log.e("temp", temperatureData.getTemperature().toString())
                         sending = true
                         val base64 = resize?.toBase64String()
-                        if(sending == true){
+                        val temp = temperatureData.getTemperature()
+                        val temperature = temperatureData.getTemperature().toString()
+//                        Toast(ctx).showCustomToastTempPass(activity, temperature)
+                        if (sending == true && temp <= 37.5) {
                             base64?.let {
-                                NetworkUtil.CheckFace(it, "edc_id", object : NetworkUtil.Companion.NetworkLisener<FaceResponseModel> {
-                                    override fun onResponse(response: FaceResponseModel) {
-                                        Toast.makeText(ctx, "Success", Toast.LENGTH_LONG).show()
-                                        Handler().postDelayed({
-                                            sending = false
-                                        }, 3000)
-                                    }
+                                NetworkUtil.CheckFace(it, ctx, temperature, object : NetworkUtil.Companion.NetworkLisener<FaceResponseModel> {
+                                            override fun onResponse(response: FaceResponseModel) {
+                                                Toast(ctx).showCustomToastFacePass(activity, temperature)
+                                                PosUtil.setRelayPower(1)
+                                                Handler().postDelayed({
+                                                    PosUtil.setRelayPower(0)
+                                                    sending = false
+                                                }, 3000)
+                                            }
 
-                                    override fun onError(errorModel: WalkInPlusErrorModel) {
-                                        Toast.makeText(ctx, errorModel.msg, Toast.LENGTH_LONG).show()
-                                        Log.e("Error",errorModel.msg)
-                                        Handler().postDelayed({
-                                            sending = false
-                                        }, 3000)
-                                    }
+                                            override fun onError(errorModel: WalkInPlusErrorModel) {
+                                                Toast(ctx).showCustomToastWarning(activity, errorModel.msg)
+//                                                Toast.makeText(ctx, errorModel.msg, Toast.LENGTH_LONG)
+//                                                        .show()
+//                                                Log.e("Error", errorModel.msg)
+                                                Handler().postDelayed({
+                                                    sending = false
+                                                }, 3000)
+                                            }
 
-                                    override fun onExpired() {
-                                        Toast.makeText(ctx, "Expired", Toast.LENGTH_LONG).show()
-                                    }
-                                }, FaceResponseModel::class.java)
+                                            override fun onExpired() {
+                                                Toast.makeText(ctx, "Expired", Toast.LENGTH_LONG).show()
+                                            }
+                                        },
+                                        FaceResponseModel::class.java
+                                )
                             }
+                        }else{
+                            Handler().postDelayed({
+                                sending = false
+                            }, 3000)
+                            Toast(ctx).showCustomToastFaceNotPass(activity, temperature)
                         }
                         val face = faces[0]
                         val faceWidth = face.boundingBox.width()
-                        Log.e("Status",faces.size.toString())
+                        Log.e("Status", faces.size.toString())
                         Log.e("panya", "faceWidth : " + faceWidth)
-                        val element = Draw(ctx, face.boundingBox, face.trackingId?.toString() ?: "Undefined")
-                        Log.e("Status","Found face")
+                        val element = Draw(
+                                ctx,
+                                face.boundingBox,
+                                face.trackingId?.toString() ?: "Undefined"
+                        )
+                        Log.e("Status", "Found face")
                         listener.onSuccess(element)
                     } else {
-                        Log.e("Status","Not found face")
-                        Log.e("Status",faces.size.toString())
+                        Log.e("Status", "Not found face")
+                        Log.e("Status", faces.size.toString())
                         listener.onFail()
                     }
                 })
@@ -227,8 +303,8 @@ class TakePhotoActivity : AppCompatActivity() {
 
         fun Bitmap.toBase64String():String{
             ByteArrayOutputStream().apply {
-                compress(Bitmap.CompressFormat.JPEG,10,this)
-                return Base64.encodeToString(toByteArray(),Base64.DEFAULT)
+                compress(Bitmap.CompressFormat.JPEG, 10, this)
+                return Base64.encodeToString(toByteArray(), Base64.DEFAULT)
             }
         }
 
@@ -250,12 +326,24 @@ class TakePhotoActivity : AppCompatActivity() {
                 Log.d(TAG, "Initalise toBitmap()")
                 rotationMatrix = Matrix()
                 rotationMatrix.postRotate(imageProxy.imageInfo.rotationDegrees.toFloat())
-                bitmapBuffer = Bitmap.createBitmap(imageProxy.width, imageProxy.height, Bitmap.Config.ARGB_8888)
+                bitmapBuffer = Bitmap.createBitmap(
+                        imageProxy.width,
+                        imageProxy.height,
+                        Bitmap.Config.ARGB_8888
+                )
             }
             // Pass image to an image analyser
             yuvToRgbConverter.yuvToRgb(image, bitmapBuffer)
             // Create the Bitmap in the correct orientation
-            return Bitmap.createBitmap(bitmapBuffer, 0, 0, bitmapBuffer.width, bitmapBuffer.height, rotationMatrix, false)
+            return Bitmap.createBitmap(
+                    bitmapBuffer,
+                    0,
+                    0,
+                    bitmapBuffer.width,
+                    bitmapBuffer.height,
+                    rotationMatrix,
+                    false
+            )
         }
     }
 
@@ -281,13 +369,112 @@ class TakePhotoActivity : AppCompatActivity() {
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
-            canvas.drawText(text,
-                rect.centerX()
-                    .toFloat(),
-                rect.centerY()
-                    .toFloat(),
-                textPaint)
+            canvas.drawText(
+                    text,
+                    rect.centerX()
+                            .toFloat(),
+                    rect.centerY()
+                            .toFloat(),
+                    textPaint
+            )
             canvas.drawRect(rect, paint)//แก้เป็นวงรี แล้วสุ่มหน้า size ใบหน้า เพื่อป้องกันการปลอมแปลง
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (mNfcAdapter != null) {
+            mNfcAdapter!!.enableForegroundDispatch(this, mPendingIntent, null, null)
+            if (NfcAdapter.ACTION_TECH_DISCOVERED == this.intent.action) {
+                processIntent(this.intent)
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        processIntent(intent)
+    }
+
+    fun processIntent(intent: Intent) {
+        var data: String? = null
+        val tag = intent.getParcelableExtra<Tag>(NfcAdapter.EXTRA_TAG)
+        val techList = tag!!.techList
+        var ID: ByteArray? = ByteArray(20)
+        Log.e("test", ID.toString())
+        data = tag.toString()
+        ID = tag.id
+        val code = ByteArrayToHexString(ID)
+        if (code != null) {
+            NetworkUtil.CheckNfc(code, ctx, object : NetworkUtil.Companion.NetworkLisener<FaceResponseModel> {
+                override fun onResponse(response: FaceResponseModel) {
+                    PosUtil.setRelayPower(1)
+                    Toast(ctx).showCustomToastPass(this@TakePhotoActivity)
+                    Handler().postDelayed({
+                        PosUtil.setRelayPower(0)
+                    }, 3000)
+                }
+
+                override fun onError(errorModel: WalkInPlusErrorModel) {
+                    Toast(ctx).showCustomToastNotPass(this@TakePhotoActivity)
+                }
+
+                override fun onExpired() {
+                    Log.e("Expire", "Expire")
+                }
+            },
+                    FaceResponseModel::class.java
+            )
+        }
+//        data += """
+//
+//
+//             UID:
+//             ${ByteArrayToHexString(ID)}
+//             """.trimIndent()
+//        data += "\nData format:"
+//        for (tech in techList) {
+//            data += """
+//
+//            $tech
+//            """.trimIndent()
+//        }
+        Log.e("data", data)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (mNfcAdapter != null) {
+            stopNFC_Listener()
+        }
+    }
+
+    private fun ByteArrayToHexString(inarray: ByteArray): String? {
+        Log.e("byte", inarray.toString())
+        var i: Int
+        var j: Int
+        var `in`: Int
+        val hex =
+            arrayOf("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f")
+        var out = ""
+        j = 0
+        while (j < inarray.size) {
+            `in` = inarray[j].toInt() and 0xff
+            i = `in` shr 4 and 0x0f
+            out += hex[i]
+            i = `in` and 0x0f
+            out += hex[i]
+            ++j
+        }
+        return "0x" + out
+    }
+
+    private fun init_NFC() {
+        val tagDetected = IntentFilter(NfcAdapter.ACTION_TECH_DISCOVERED)
+        tagDetected.addCategory(Intent.CATEGORY_DEFAULT)
+    }
+
+    private fun stopNFC_Listener() {
+        mNfcAdapter!!.disableForegroundDispatch(this)
     }
 }

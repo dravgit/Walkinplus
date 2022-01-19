@@ -1,6 +1,8 @@
 package com.example.walkinplus.utils
 
 import android.app.ProgressDialog
+import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.androidnetworking.AndroidNetworking
 import com.androidnetworking.common.Priority
@@ -16,24 +18,44 @@ import org.json.JSONObject
 
 class NetworkUtil {
     companion object {
-        private val STATUS_CODE_SUCCESS = 200
-        private val URL_DOMAIN = "http://206.189.87.217"
-        val URL_CHECK = "$URL_DOMAIN/api/v1/check"
+        private val STATUS_CODE_SUCCESS = 1201
+        private val STATUS_CODE_ACCESS = 1202
+        private val STATUS_CODE_EDC = 1203
+        private val STATUS_CODE_REGISTER = 1204
+        private val STATUS_CODE_VALIDATE = 1422
+        private val URL_DOMAIN = "https://plus.walkinvms.com"
+        val URL_CHECKFACE = "$URL_DOMAIN/api/v1/check"
+        val URL_CHECKNFC = "$URL_DOMAIN/api/v1/check_nfc"
 
         var progressdialog: ProgressDialog? = null
 
-        fun CheckFace(face: String, serial: String, listener: NetworkLisener<FaceResponseModel>, kClass: Class<FaceResponseModel>) {
-            AndroidNetworking.post(URL_CHECK)
-                .addBodyParameter("image", face)
-                .addBodyParameter("edc_id", "ED0001")
-                .setTag("checkface")
-                .setPriority(Priority.HIGH)
-                .build()
-                .getAsJSONObject(getResponseListener(kClass, listener))
+        fun CheckFace(face: String,ctx: Context,  temperature: String, listener: NetworkLisener<FaceResponseModel>, kClass: Class<FaceResponseModel>) {
+            Log.e("SN",Build.SERIAL)
+            showLoadingDialog(ctx)
+            AndroidNetworking.post(URL_CHECKFACE)
+                    .addBodyParameter("image", face)
+                    .addBodyParameter("edc_id", Build.SERIAL)
+                    .addBodyParameter("temperature", temperature)
+                    .setTag("checkface")
+                    .setPriority(Priority.HIGH)
+                    .build()
+                    .getAsJSONObject(getResponseListener(kClass, listener))
         }
 
-        private fun showLoadingDialog() {
-            progressdialog = ProgressDialog(Util.activityContext)
+        fun CheckNfc(code: String,ctx: Context, listener: NetworkLisener<FaceResponseModel>, kClass: Class<FaceResponseModel>) {
+            Log.e("SN",Build.SERIAL)
+//            showLoadingDialog(ctx)
+            AndroidNetworking.post(URL_CHECKNFC)
+                    .addBodyParameter("nfc", code)
+                    .addBodyParameter("edc_id", Build.SERIAL)
+                    .setTag("checknfc")
+                    .setPriority(Priority.HIGH)
+                    .build()
+                    .getAsJSONObject(getResponseListener(kClass, listener))
+        }
+
+        private fun showLoadingDialog(ctx: Context) {
+            progressdialog = ProgressDialog(ctx)
             progressdialog?.setMessage("Please Wait....")
             progressdialog?.show()
         }
@@ -64,9 +86,15 @@ class NetworkUtil {
                                 val jsonData = it.getJSONObject("data")
                                 listener.onResponse(Gson().fromJson(jsonData.toString(), kClass))
                             }
-                        } else {
+                        } else if (STATUS_CODE_ACCESS.equals(status) || STATUS_CODE_EDC.equals(status) || STATUS_CODE_REGISTER.equals(status) || STATUS_CODE_VALIDATE.equals(status)) {
                             val obj = JSONObject().put("error_code", status)
                                 .put("msg", it.getString("message"))
+                            val walkInErrorModel = Gson().fromJson(obj.toString(), WalkInPlusErrorModel::class.java)
+                            listener.onError(walkInErrorModel)
+                            showError(status)
+                        } else {
+                            val obj = JSONObject().put("error_code", status)
+                                    .put("msg", "Please contract Admin.")
                             val walkInErrorModel = Gson().fromJson(obj.toString(), WalkInPlusErrorModel::class.java)
                             listener.onError(walkInErrorModel)
                             showError(status)
